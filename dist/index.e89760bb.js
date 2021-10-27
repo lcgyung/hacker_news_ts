@@ -463,21 +463,16 @@ var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 var _router = require("./core/router");
 var _routerDefault = parcelHelpers.interopDefault(_router);
 var _page = require("./page");
-const store = {
-    currentPage: 1,
-    feeds: []
-};
-window.store = store;
-// Initialized
+var _store = require("./store");
+const store = new _store.Store();
 const router = new _routerDefault.default();
-const newsFeedView = new _page.NewsFeedView("root");
-const newsDetailView = new _page.NewsDetailView("root");
+const newsFeedView = new _page.NewsFeedView("root", store);
+const newsDetailView = new _page.NewsDetailView("root", store);
 router.setDefaultPage(newsFeedView);
-router.addRoutePath("/page/", newsFeedView);
-router.addRoutePath("/show/", newsDetailView);
-router.route();
+router.addRoutePath("/page/", newsFeedView, /page\/(\d+)/);
+router.addRoutePath("/show/", newsDetailView, /show\/(\d+)/);
 
-},{"./core/router":"86p84","./page":"kQw7w","@parcel/transformer-js/src/esmodule-helpers.js":"bUtGU"}],"86p84":[function(require,module,exports) {
+},{"./core/router":"86p84","./page":"kQw7w","@parcel/transformer-js/src/esmodule-helpers.js":"bUtGU","./store":"4IKNF"}],"86p84":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 parcelHelpers.export(exports, "default", ()=>Router
@@ -488,10 +483,11 @@ class Router {
         this.routeTable = [];
         this.defaultRoute = null;
     }
-    setDefaultPage(page) {
+    setDefaultPage(page, params = null) {
         this.defaultRoute = {
             path: "",
-            page
+            page,
+            params
         };
     }
     addRoutePath(path, page) {
@@ -587,19 +583,17 @@ const template = /* html */ `
   </div>
 `;
 class NewsDetailView extends _viewDefault.default {
-    constructor(containerId){
+    constructor(containerId, store){
         super(containerId, template);
+        this.store = store;
     }
-    render() {
-        const id = location?.hash.substr(7);
+    render(id) {
+        const { currentPage , makeRead  } = this.store;
         const api = new _api.NewsDetailApi(_config.CONTENT_URL);
         const { title , comments , content  } = api.getData();
-        for(let i = 0; i < window.store.feeds.length; i++)if (window.store.feeds[i].id === Number(id)) {
-            window.store.feeds[i].read = true;
-            break;
-        }
+        makeRead(Number(id));
         this.setTemplateData("comments", this.makeComment(comments));
-        this.setTemplateData("currentPage", String(window.store.currentPage));
+        this.setTemplateData("currentPage", String(currentPage));
         this.setTemplateData("title", title);
         this.setTemplateData("content", content);
         this.updateView();
@@ -731,21 +725,18 @@ const template = /* html */ `
   </div>
 `;
 class NewsFeedView extends _viewDefault.default {
-    constructor(containerId){
+    constructor(containerId, store){
         super(containerId, template);
+        this.store = store;
         this.api = new _api.NewsFeedApi(_config.NEWS_URL);
-        this.feeds = window.store.feeds;
-        if (this.feeds.length === 0) {
-            this.feeds = window.store.feeds = this.api.getData();
-            this.makeFeeds();
-        }
+        if (!this.store.hasFeeds) this.store.setFeeds(this.api.getData());
     }
-    render() {
-        window.store.currentPage = Number(location.hash.substr(7) || 1);
-        const maxPage = Math.ceil(this.feeds.length / 10);
+    render(page = "1") {
+        const { currentPage , maxPage , getFeed  } = this.store;
+        this.store.currentPage = Number(page);
         // List Rendering
-        for(let i = (window.store.currentPage - 1) * 10; i < window.store.currentPage * 10; i++){
-            const { id , read , title , user , points , comments_count , time_ago  } = this.feeds[i];
+        for(let i = (currentPage - 1) * 10; i < currentPage * 10; i++){
+            const { id , read , title , user , points , comments_count , time_ago  } = getFeed(i);
             this.addhtml(/* html */ `
           <div class="p-6 ${read ? "bg-red-500" : "bg-white"} mt-6 rounded-lg shadow-md transition-colors duration-500 hover:bg-green-100">
             <div class="flex">
@@ -769,15 +760,70 @@ class NewsFeedView extends _viewDefault.default {
         `);
         }
         this.setTemplateData("news_feed", this.getHtml());
-        this.setTemplateData("prev_page", `${window.store.currentPage > 1 ? window.store.currentPage - 1 : 1}`);
-        this.setTemplateData("next_page", `${window.store.currentPage < maxPage ? window.store.currentPage + 1 : maxPage}`);
+        this.setTemplateData("prev_page", `${currentPage > 1 ? currentPage - 1 : 1}`);
+        this.setTemplateData("next_page", `${currentPage < maxPage ? currentPage + 1 : maxPage}`);
         this.updateView();
-    }
-    makeFeeds() {
-        for(let i = 0; i < this.feeds.length; i++)this.feeds[i].read = false;
     }
 }
 
-},{"../core/view":"l61Oj","../core/api":"eiLhE","../config":"bpXeT","@parcel/transformer-js/src/esmodule-helpers.js":"bUtGU"}]},["beZoP","ftAGR"], "ftAGR", "parcelRequirebf1a")
+},{"../core/view":"l61Oj","../core/api":"eiLhE","../config":"bpXeT","@parcel/transformer-js/src/esmodule-helpers.js":"bUtGU"}],"4IKNF":[function(require,module,exports) {
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+parcelHelpers.export(exports, "default", ()=>Store
+);
+class Store {
+    constructor(){
+        this._pagination = 10;
+        this.feeds = [];
+        this._currentPage = 1;
+    }
+    get pagination() {
+        return this._pagination;
+    }
+    get currentPage() {
+        return this._currentPage;
+    }
+    set currentPage(page) {
+        this._currentPage = page;
+    }
+    get nextPage() {
+        return this._currentPage + 1;
+    }
+    get prevPage() {
+        return this._currentPage > 1 ? this._currentPage - 1 : 1;
+    }
+    get numberOfFeed() {
+        return this.feeds.length;
+    }
+    get hasFeeds() {
+        return this.feeds.length > 0;
+    }
+    get maxPage() {
+        return Math.ceil(this.feeds.length / this._pagination);
+    }
+    getAllFeeds() {
+        return this.feeds;
+    }
+    getFeed(position) {
+        return this.feeds[position];
+    }
+    setFeeds(feeds) {
+        feeds.map((feed)=>({
+                ...feed,
+                read: false
+            })
+        );
+    }
+    setPagination(page) {
+        this._pagination = page;
+    }
+    makeRead(id) {
+        const feed = this.feeds.find((feed)=>feed.id === id
+        );
+        if (feed) feed.read = true;
+    }
+}
+
+},{"@parcel/transformer-js/src/esmodule-helpers.js":"bUtGU"}]},["beZoP","ftAGR"], "ftAGR", "parcelRequirebf1a")
 
 //# sourceMappingURL=index.e89760bb.js.map
